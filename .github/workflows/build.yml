@@ -2,22 +2,22 @@ name: Build and Deploy ONNX Embedding Server
 
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
+    branches: [main, master]
+    tags: ["v*"]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
 
 env:
-  PYTHON_VERSION: '3.11'
-  S3_BUCKET: 'test-dev-figma-cs'
-  AWS_REGION: 'eu-north-1'
+  PYTHON_VERSION: "3.11"
+  S3_BUCKET: "test-dev-figma-cs"
+  AWS_REGION: "eu-north-1"
 
 jobs:
   build:
     name: Build on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: true  # Allow the workflow to continue if one platform fails
+    continue-on-error: true # Allow the workflow to continue if one platform fails
     strategy:
       matrix:
         include:
@@ -32,304 +32,346 @@ jobs:
             executable: embed-server-macos
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Convert model to ONNX
-      run: |
-        echo "Starting model conversion..."
-        python convert_to_onnx.py
-        echo "Model conversion completed"
+      - name: Convert model to ONNX
+        run: |
+          echo "Starting model conversion..."
+          python convert_to_onnx.py
+          echo "Model conversion completed"
 
-    - name: Verify model files (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        Write-Host "Checking model files..."
-        Get-ChildItem -Path "onnx_model" -ErrorAction SilentlyContinue | Format-Table -AutoSize
-        if (!(Test-Path "onnx_model")) { Write-Host "onnx_model directory not found" }
-        Get-ChildItem -Path "tokenizer" -ErrorAction SilentlyContinue | Format-Table -AutoSize
-        if (!(Test-Path "tokenizer")) { Write-Host "tokenizer directory not found" }
-        if (Test-Path "onnx_model/model.onnx") {
-          Write-Host "ONNX model file exists"
-          python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
-        } else {
-          Write-Host "ONNX model file not found"
-        }
-      shell: powershell
-
-    - name: Verify model files (Linux/macOS)
-      if: matrix.os != 'windows-latest'
-      run: |
-        echo "Checking model files..."
-        ls -la onnx_model/ || echo "onnx_model directory not found"
-        ls -la tokenizer/ || echo "tokenizer directory not found"
-        if [ -f "onnx_model/model.onnx" ]; then
-          echo "ONNX model file exists"
-          python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
-        else
-          echo "ONNX model file not found"
-        fi
-      shell: bash
-
-    - name: Build executable with Nuitka (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        Write-Host "Starting build for ${{ matrix.platform }}..."
-        Write-Host "Current directory: $(Get-Location)"
-        Write-Host "Python version: $(python --version)"
-        Write-Host "Nuitka version: $(python -m nuitka --version)"
-        python build.py ${{ matrix.platform }}
-        Write-Host "Build completed"
-      shell: powershell
-
-    - name: Build executable with Nuitka (Linux/macOS)
-      if: matrix.os != 'windows-latest'
-      run: |
-        echo "Starting build for ${{ matrix.platform }}..."
-        echo "Current directory: $(pwd)"
-        echo "Python version: $(python --version)"
-        echo "Nuitka version: $(python -m nuitka --version)"
-        python build.py ${{ matrix.platform }}
-        echo "Build completed"
-      shell: bash
-
-    - name: Verify build output (Windows)
-      if: matrix.os == 'windows-latest'
-      run: |
-        Get-ChildItem -Path "build" -ErrorAction SilentlyContinue | Format-Table -AutoSize
-        if (Test-Path "build/${{ matrix.executable }}") {
-          Write-Host "[OK] Executable built successfully"
-          Get-ChildItem -Path "build/${{ matrix.executable }}" | Format-Table Name, Length -AutoSize
-        } else {
-          Write-Host "[FAIL] Executable not found"
-          exit 1
-        }
-      shell: powershell
-
-    - name: Verify build output (Linux/macOS)
-      if: matrix.os != 'windows-latest'
-      run: |
-        ls -la build/
-        if [ -f "build/${{ matrix.executable }}" ]; then
-          echo "[OK] Executable built successfully"
-          ls -lh build/${{ matrix.executable }}
-          # Ensure executable permission is set
-          chmod +x build/${{ matrix.executable }}
-        else
-          echo "[FAIL] Executable not found"
-          exit 1
-        fi
-      shell: bash
-
-    - name: Test executable (Linux/macOS)
-      id: test_executable
-      if: matrix.os != 'windows-latest'
-      continue-on-error: true
-      run: |
-        # Ensure executable permission
-        chmod +x build/${{ matrix.executable }}
-        
-        # Start server with logging
-        echo "Starting server..."
-        build/${{ matrix.executable }} > server_output.log 2>&1 &
-        SERVER_PID=$!
-        
-        # Wait for server to start
-        echo "Waiting for server to start..."
-        sleep 15
-        
-        # Check if server process is still running
-        if ! ps -p $SERVER_PID > /dev/null; then
-          echo "Server process failed to start!"
-          echo "Server logs:"
-          cat server_output.log
-          exit 1
-        fi
-        
-        echo "Server process is running (PID: $SERVER_PID)."
-        
-        # Try the health check with retries
-        echo "Testing health endpoint..."
-        MAX_RETRIES=5
-        RETRY_COUNT=0
-        HEALTH_CHECK_PASSED=false
-        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-          if curl -f --connect-timeout 5 http://localhost:8000/health; then
-            echo "[OK] Health check passed on attempt $(($RETRY_COUNT+1))"
-            echo "TEST_RESULT=success" >> $GITHUB_ENV
-            HEALTH_CHECK_PASSED=true
-            break
-          fi
-          RETRY_COUNT=$(($RETRY_COUNT+1))
-          echo "Health check failed on attempt $RETRY_COUNT. Retrying in 5 seconds..."
-          sleep 5
-        done
-        
-        if [ "$HEALTH_CHECK_PASSED" = false ]; then
-          echo "[FAIL] Health check failed after $MAX_RETRIES attempts."
-          echo "Server logs:"
-          cat server_output.log
-          echo "TEST_RESULT=failure" >> $GITHUB_ENV
-        fi
-        
-        # Kill the server process
-        echo "Stopping server..."
-        kill $SERVER_PID || true
-        sleep 2
-
-    - name: Test executable (Windows)
-      id: test_executable_win
-      if: matrix.os == 'windows-latest'
-      continue-on-error: true
-      run: |
-        Start-Process -FilePath "build/${{ matrix.executable }}" -RedirectStandardOutput server_output.txt -RedirectStandardError server_error.txt -NoNewWindow
-        
-        Write-Host "Waiting for server to start..."
-        Start-Sleep -Seconds 15
-        
-        Write-Host "Testing health endpoint..."
-        try {
-          $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing
-          if ($response.StatusCode -eq 200) {
-            Write-Host "[OK] Executable test passed"
-            echo "TEST_RESULT=success" | Out-File -Append -FilePath $Env:GITHUB_ENV
+      - name: Verify model files (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Write-Host "Checking model files..."
+          Get-ChildItem -Path "onnx_model" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+          if (!(Test-Path "onnx_model")) { Write-Host "onnx_model directory not found" }
+          Get-ChildItem -Path "tokenizer" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+          if (!(Test-Path "tokenizer")) { Write-Host "tokenizer directory not found" }
+          if (Test-Path "onnx_model/model.onnx") {
+            Write-Host "ONNX model file exists"
+            python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
           } else {
-            Write-Host "[FAIL] Health check failed with status: $($response.StatusCode)"
+            Write-Host "ONNX model file not found"
+          }
+        shell: powershell
+
+      - name: Verify model files (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          echo "Checking model files..."
+          ls -la onnx_model/ || echo "onnx_model directory not found"
+          ls -la tokenizer/ || echo "tokenizer directory not found"
+          if [ -f "onnx_model/model.onnx" ]; then
+            echo "ONNX model file exists"
+            python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
+          else
+            echo "ONNX model file not found"
+          fi
+        shell: bash
+
+      - name: Build executable with Nuitka (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Write-Host "Starting build for ${{ matrix.platform }}..."
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Python version: $(python --version)"
+          Write-Host "Nuitka version: $(python -m nuitka --version)"
+          python build.py ${{ matrix.platform }}
+          Write-Host "Build completed"
+        shell: powershell
+
+      - name: Build executable with Nuitka (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          echo "Starting build for ${{ matrix.platform }}..."
+          echo "Current directory: $(pwd)"
+          echo "Python version: $(python --version)"
+          echo "Nuitka version: $(python -m nuitka --version)"
+          python build.py ${{ matrix.platform }}
+          echo "Build completed"
+        shell: bash
+
+      - name: Verify build output (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Get-ChildItem -Path "build" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+          if (Test-Path "build/${{ matrix.executable }}") {
+            Write-Host "[OK] Executable built successfully"
+            Get-ChildItem -Path "build/${{ matrix.executable }}" | Format-Table Name, Length -AutoSize
+          } else {
+            Write-Host "[FAIL] Executable not found"
+            exit 1
+          }
+        shell: powershell
+
+      - name: Verify build output (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          ls -la build/
+          if [ -f "build/${{ matrix.executable }}" ]; then
+            echo "[OK] Executable built successfully"
+            ls -lh build/${{ matrix.executable }}
+            # Ensure executable permission is set
+            chmod +x build/${{ matrix.executable }}
+          else
+            echo "[FAIL] Executable not found"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Test executable (Linux/macOS)
+        id: test_executable
+        if: matrix.os != 'windows-latest'
+        continue-on-error: true
+        run: |
+          # Ensure executable permission
+          chmod +x build/${{ matrix.executable }}
+
+          # Check if executable exists and is executable
+          if [ ! -x "build/${{ matrix.executable }}" ]; then
+            echo "[FAIL] Executable not found or not executable"
+            echo "TEST_RESULT=failure" >> $GITHUB_ENV
+            exit 1
+          fi
+
+          # Start server with logging
+          echo "Starting server..."
+          build/${{ matrix.executable }} > server_output.log 2>&1 &
+          SERVER_PID=$!
+
+          # Wait for server to start
+          echo "Waiting for server to start..."
+          sleep 20
+
+          # Check if server process is still running
+          if ! ps -p $SERVER_PID > /dev/null; then
+            echo "Server process failed to start!"
+            echo "Server logs:"
+            cat server_output.log || echo "No server logs available"
+            echo "TEST_RESULT=failure" >> $GITHUB_ENV
+            exit 1
+          fi
+
+          echo "Server process is running (PID: $SERVER_PID)."
+
+          # Try the health check with retries
+          echo "Testing health endpoint..."
+          MAX_RETRIES=10
+          RETRY_COUNT=0
+          HEALTH_CHECK_PASSED=false
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Health check attempt $(($RETRY_COUNT+1))/$MAX_RETRIES"
+            
+            # Use different approaches based on OS
+            if [ "${{ matrix.os }}" = "macos-latest" ]; then
+              # macOS - use curl without timeout command
+              if curl -f --connect-timeout 10 --max-time 30 http://localhost:8000/health 2>/dev/null; then
+                echo "[OK] Health check passed on attempt $(($RETRY_COUNT+1))"
+                echo "TEST_RESULT=success" >> $GITHUB_ENV
+                HEALTH_CHECK_PASSED=true
+                break
+              fi
+            else
+              # Linux - can use timeout if available
+              if command -v timeout >/dev/null 2>&1; then
+                if timeout 30 curl -f --connect-timeout 10 http://localhost:8000/health 2>/dev/null; then
+                  echo "[OK] Health check passed on attempt $(($RETRY_COUNT+1))"
+                  echo "TEST_RESULT=success" >> $GITHUB_ENV
+                  HEALTH_CHECK_PASSED=true
+                  break
+                fi
+              else
+                if curl -f --connect-timeout 10 --max-time 30 http://localhost:8000/health 2>/dev/null; then
+                  echo "[OK] Health check passed on attempt $(($RETRY_COUNT+1))"
+                  echo "TEST_RESULT=success" >> $GITHUB_ENV
+                  HEALTH_CHECK_PASSED=true
+                  break
+                fi
+              fi
+            fi
+            
+            RETRY_COUNT=$(($RETRY_COUNT+1))
+            echo "Health check failed on attempt $RETRY_COUNT. Retrying in 5 seconds..."
+            sleep 5
+          done
+
+          if [ "$HEALTH_CHECK_PASSED" = false ]; then
+            echo "[FAIL] Health check failed after $MAX_RETRIES attempts."
+            echo "Server logs:"
+            cat server_output.log || echo "No server logs available"
+            echo "TEST_RESULT=failure" >> $GITHUB_ENV
+          fi
+
+          # Kill the server process and its children
+          echo "Stopping server..."
+          if ps -p $SERVER_PID > /dev/null; then
+            kill $SERVER_PID || true
+            sleep 3
+            # Force kill if still running
+            if ps -p $SERVER_PID > /dev/null; then
+              kill -9 $SERVER_PID || true
+            fi
+          fi
+
+          # Clean up any remaining processes
+          pkill -f "embed-server" || true
+          sleep 2
+
+      - name: Test executable (Windows)
+        id: test_executable_win
+        if: matrix.os == 'windows-latest'
+        continue-on-error: true
+        run: |
+          Start-Process -FilePath "build/${{ matrix.executable }}" -RedirectStandardOutput server_output.txt -RedirectStandardError server_error.txt -NoNewWindow
+
+          Write-Host "Waiting for server to start..."
+          Start-Sleep -Seconds 15
+
+          Write-Host "Testing health endpoint..."
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing
+            if ($response.StatusCode -eq 200) {
+              Write-Host "[OK] Executable test passed"
+              echo "TEST_RESULT=success" | Out-File -Append -FilePath $Env:GITHUB_ENV
+            } else {
+              Write-Host "[FAIL] Health check failed with status: $($response.StatusCode)"
+              Get-Content server_output.txt
+              Get-Content server_error.txt
+              echo "TEST_RESULT=failure" | Out-File -Append -FilePath $Env:GITHUB_ENV
+              # Don't exit here - continue to upload even if test fails
+            }
+          } catch {
+            Write-Host "[FAIL] Health check failed: $_"
             Get-Content server_output.txt
             Get-Content server_error.txt
             echo "TEST_RESULT=failure" | Out-File -Append -FilePath $Env:GITHUB_ENV
             # Don't exit here - continue to upload even if test fails
           }
-        } catch {
-          Write-Host "[FAIL] Health check failed: $_"
-          Get-Content server_output.txt
-          Get-Content server_error.txt
-          echo "TEST_RESULT=failure" | Out-File -Append -FilePath $Env:GITHUB_ENV
-          # Don't exit here - continue to upload even if test fails
-        }
-        
-        Get-Process | Where-Object {$_.ProcessName -like "*embed-server*"} | Stop-Process -Force
-      shell: powershell
 
-    - name: Create release info
-      run: |
-        echo "Build Date: $(date)" > build/build-info.txt
-        echo "Platform: ${{ matrix.platform }}" >> build/build-info.txt
-        echo "Python Version: ${{ env.PYTHON_VERSION }}" >> build/build-info.txt
-        echo "Commit: ${{ github.sha }}" >> build/build-info.txt
-        echo "Ref: ${{ github.ref }}" >> build/build-info.txt
-        echo "Test Result: ${{ env.TEST_RESULT || 'unknown' }}" >> build/build-info.txt
-      shell: bash
+          Get-Process | Where-Object {$_.ProcessName -like "*embed-server*"} | Stop-Process -Force
+        shell: powershell
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.executable }}
-        path: |
-          build/${{ matrix.executable }}
-          build/build-info.txt
-        retention-days: 30
+      - name: Create release info
+        run: |
+          echo "Build Date: $(date)" > build/build-info.txt
+          echo "Platform: ${{ matrix.platform }}" >> build/build-info.txt
+          echo "Python Version: ${{ env.PYTHON_VERSION }}" >> build/build-info.txt
+          echo "Commit: ${{ github.sha }}" >> build/build-info.txt
+          echo "Ref: ${{ github.ref }}" >> build/build-info.txt
+          echo "Test Result: ${{ env.TEST_RESULT || 'unknown' }}" >> build/build-info.txt
+        shell: bash
 
-    - name: Configure AWS credentials
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_TEST }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_TEST }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.executable }}
+          path: |
+            build/${{ matrix.executable }}
+            build/build-info.txt
+          retention-days: 30
 
-    - name: Upload to S3
-      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-      run: |
-        # Create version tag
-        if [[ ${{ github.ref }} == refs/tags/* ]]; then
-          VERSION=${GITHUB_REF#refs/tags/}
-        else
-          VERSION="latest"
-        fi
-        
-        # Upload executable
-        aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}
-        aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.platform }}-build-info.txt
-        
-        # Upload to latest as well
-        if [[ "$VERSION" != "latest" ]]; then
-          aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.executable }}
-          aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.platform }}-build-info.txt
-        fi
-        
-        echo "[OK] Uploaded to S3: s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}"
-      shell: bash
+      - name: Configure AWS credentials
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_TEST }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_TEST }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Create version tag
+          if [[ ${{ github.ref }} == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="latest"
+          fi
+
+          # Upload executable
+          aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}
+          aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.platform }}-build-info.txt
+
+          # Upload to latest as well
+          if [[ "$VERSION" != "latest" ]]; then
+            aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.executable }}
+            aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.platform }}-build-info.txt
+          fi
+
+          echo "[OK] Uploaded to S3: s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}"
+        shell: bash
 
   create-release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     # Allow the job to run even if some platforms failed
     if: ${{ always() && startsWith(github.ref, 'refs/tags/') && needs.build.result != 'cancelled' }}
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: artifacts
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
-    - name: Create release
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          artifacts/embed-server-linux/embed-server-linux
-          artifacts/embed-server-win.exe/embed-server-win.exe
-          artifacts/embed-server-macos/embed-server-macos
-        generate_release_notes: true
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/embed-server-linux/embed-server-linux
+            artifacts/embed-server-win.exe/embed-server-win.exe
+            artifacts/embed-server-macos/embed-server-macos
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   notify:
     name: Notify Build Complete
     needs: build
     runs-on: ubuntu-latest
     if: always()
-    
+
     steps:
-    - name: Build Status Summary
-      run: |
-        echo "🎯 Build Summary:"
-        echo "Build Status: ${{ needs.build.result }}"
-        echo "Event: ${{ github.event_name }}"
-        echo "Ref: ${{ github.ref }}"
-        echo "SHA: ${{ github.sha }}"
-        
-        if [[ "${{ needs.build.result }}" == "success" ]]; then
-          echo "✅ All executables built successfully!"
-          echo "📦 Artifacts uploaded to GitHub Actions"
-          if [[ "${{ github.event_name }}" == "push" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "☁️ Executables uploaded to S3"
+      - name: Build Status Summary
+        run: |
+          echo "🎯 Build Summary:"
+          echo "Build Status: ${{ needs.build.result }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+
+          if [[ "${{ needs.build.result }}" == "success" ]]; then
+            echo "✅ All executables built successfully!"
+            echo "📦 Artifacts uploaded to GitHub Actions"
+            if [[ "${{ github.event_name }}" == "push" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+              echo "☁️ Executables uploaded to S3"
+            fi
+          else
+            echo "❌ Build failed"
           fi
-        else
-          echo "❌ Build failed"
-        fi
