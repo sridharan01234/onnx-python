@@ -16,9 +16,11 @@ def run_command(cmd, check=True):
     print(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, check=check, capture_output=True, text=True)
     if result.stdout:
-        print(result.stdout)
+        print("STDOUT:", result.stdout)
     if result.stderr:
-        print(result.stderr)
+        print("STDERR:", result.stderr)
+    if result.returncode != 0:
+        print(f"Command failed with return code: {result.returncode}")
     return result
 
 
@@ -29,16 +31,29 @@ def build_executable(target_os=None):
     build_dir = Path("build")
     build_dir.mkdir(exist_ok=True)
     
+    # Determine current and target OS
+    current_os = platform.system().lower()
+    if target_os:
+        target_os = target_os.lower()
+    else:
+        target_os = current_os
+    
     # Base Nuitka command
     base_cmd = [
         sys.executable, "-m", "nuitka",
         "--onefile",
         "--standalone",
         "--follow-imports",
-        "--enable-plugin=transformers",
-        "--disable-console",  # Remove this if you want console output
         "--output-dir=build",
     ]
+    
+    # Add platform-specific options
+    if current_os == "windows":
+        base_cmd.extend([
+            "--disable-console",
+            "--windows-disable-console",
+        ])
+    # For Linux and macOS, keep console enabled for debugging
     
     # Add data files (model and tokenizer)
     data_files = [
@@ -53,12 +68,21 @@ def build_executable(target_os=None):
     else:
         target_os = current_os
     
+    # Map OS names correctly
     if target_os == "windows":
         output_name = "embed-server-win.exe"
-    elif target_os == "darwin":
+    elif target_os == "macos" or target_os == "darwin":
         output_name = "embed-server-macos"
-    else:  # linux
+    elif target_os == "linux":
         output_name = "embed-server-linux"
+    else:
+        # Auto-detect based on current platform
+        if current_os == "windows":
+            output_name = "embed-server-win.exe"
+        elif current_os == "darwin":
+            output_name = "embed-server-macos"
+        else:  # linux
+            output_name = "embed-server-linux"
     
     # Build command
     cmd = base_cmd + data_files + [
@@ -66,7 +90,8 @@ def build_executable(target_os=None):
         "server.py"
     ]
     
-    print(f"Building executable for {target_os}...")
+    print(f"Building executable for {target_os} (current OS: {current_os})...")
+    print(f"Output name: {output_name}")
     print("This may take several minutes...")
     
     try:
@@ -75,6 +100,7 @@ def build_executable(target_os=None):
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Build failed: {e}")
+        print(f"Command that failed: {' '.join(cmd)}")
         return False
 
 
