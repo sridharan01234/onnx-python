@@ -58,7 +58,24 @@ jobs:
         python convert_to_onnx.py
         echo "Model conversion completed"
 
-    - name: Verify model files
+    - name: Verify model files (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        Write-Host "Checking model files..."
+        Get-ChildItem -Path "onnx_model" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+        if (!(Test-Path "onnx_model")) { Write-Host "onnx_model directory not found" }
+        Get-ChildItem -Path "tokenizer" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+        if (!(Test-Path "tokenizer")) { Write-Host "tokenizer directory not found" }
+        if (Test-Path "onnx_model/model.onnx") {
+          Write-Host "ONNX model file exists"
+          python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
+        } else {
+          Write-Host "ONNX model file not found"
+        }
+      shell: powershell
+
+    - name: Verify model files (Linux/macOS)
+      if: matrix.os != 'windows-latest'
       run: |
         echo "Checking model files..."
         ls -la onnx_model/ || echo "onnx_model directory not found"
@@ -69,8 +86,21 @@ jobs:
         else
           echo "ONNX model file not found"
         fi
+      shell: bash
 
-    - name: Build executable with Nuitka
+    - name: Build executable with Nuitka (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        Write-Host "Starting build for ${{ matrix.platform }}..."
+        Write-Host "Current directory: $(Get-Location)"
+        Write-Host "Python version: $(python --version)"
+        Write-Host "Nuitka version: $(python -m nuitka --version)"
+        python build.py ${{ matrix.platform }}
+        Write-Host "Build completed"
+      shell: powershell
+
+    - name: Build executable with Nuitka (Linux/macOS)
+      if: matrix.os != 'windows-latest'
       run: |
         echo "Starting build for ${{ matrix.platform }}..."
         echo "Current directory: $(pwd)"
@@ -78,8 +108,23 @@ jobs:
         echo "Nuitka version: $(python -m nuitka --version)"
         python build.py ${{ matrix.platform }}
         echo "Build completed"
+      shell: bash
 
-    - name: Verify build output
+    - name: Verify build output (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        Get-ChildItem -Path "build" -ErrorAction SilentlyContinue | Format-Table -AutoSize
+        if (Test-Path "build/${{ matrix.executable }}") {
+          Write-Host "[OK] Executable built successfully"
+          Get-ChildItem -Path "build/${{ matrix.executable }}" | Format-Table Name, Length -AutoSize
+        } else {
+          Write-Host "[FAIL] Executable not found"
+          exit 1
+        }
+      shell: powershell
+
+    - name: Verify build output (Linux/macOS)
+      if: matrix.os != 'windows-latest'
       run: |
         ls -la build/
         if [ -f "build/${{ matrix.executable }}" ]; then
