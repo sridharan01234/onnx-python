@@ -8,11 +8,17 @@ import json
 import time
 import sys
 
+# Fix Windows encoding issue
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
 
 def test_server(base_url="http://localhost:8000"):
     """Test the embedding server"""
     
-    print("🧪 Testing ONNX Embedding Server")
+    print("[TEST] Testing ONNX Embedding Server")
     print("=" * 40)
     
     # Test health endpoint
@@ -21,7 +27,7 @@ def test_server(base_url="http://localhost:8000"):
         response = requests.get(f"{base_url}/health")
         if response.status_code == 200:
             health_data = response.json()
-            print(f"✓ Health check: {health_data}")
+            print(f"[OK] Health check: {health_data}")
         else:
             print(f"❌ Health check failed: {response.status_code}")
             return False
@@ -53,7 +59,7 @@ def test_server(base_url="http://localhost:8000"):
                 data = response.json()
                 embedding = data["embedding"]
                 dimension = data["dimension"]
-                print(f"✓ Success: {dimension}D embedding")
+                print(f"[OK] Success: {dimension}D embedding")
                 print(f"  First 5 values: {embedding[:5]}")
                 print(f"  Embedding norm: {sum(x*x for x in embedding)**0.5:.4f}")
             else:
@@ -64,7 +70,7 @@ def test_server(base_url="http://localhost:8000"):
             print(f"❌ Request failed: {e}")
     
     print("\n" + "=" * 40)
-    print("✓ Test completed!")
+    print("[OK] Test completed!")
     return True
 
 

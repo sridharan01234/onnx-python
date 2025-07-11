@@ -4,9 +4,16 @@ Convert HuggingFace sentence-transformers model to ONNX format
 """
 
 import os
+import sys
 from pathlib import Path
 from optimum.exporters import onnx
 from transformers import AutoTokenizer
+
+# Fix Windows encoding issue
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
 
 def convert_model_to_onnx():
     """Convert sentence-transformers/all-MiniLM-L6-v2 to ONNX"""
@@ -31,7 +38,7 @@ def convert_model_to_onnx():
             optimize="O2",
             device="cpu"
         )
-        print(f"✓ Model exported to {onnx_dir}/model.onnx")
+        print(f"[OK] Model exported to {onnx_dir}/model.onnx")
     except Exception as e:
         print(f"Error exporting model: {e}")
         return False
@@ -40,12 +47,12 @@ def convert_model_to_onnx():
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.save_pretrained(str(tokenizer_dir))
-        print(f"✓ Tokenizer saved to {tokenizer_dir}/")
+        print(f"[OK] Tokenizer saved to {tokenizer_dir}/")
     except Exception as e:
         print(f"Error saving tokenizer: {e}")
         return False
     
-    print("✓ Model conversion completed successfully!")
+    print("[OK] Model conversion completed successfully!")
     return True
 
 if __name__ == "__main__":

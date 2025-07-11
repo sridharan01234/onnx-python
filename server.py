@@ -16,6 +16,12 @@ from pydantic import BaseModel
 import onnxruntime as ort
 from transformers import AutoTokenizer
 
+# Fix Windows encoding issue
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
 
 class EmbedRequest(BaseModel):
     text: str
@@ -60,7 +66,7 @@ class ONNXEmbeddingServer:
                 str(tokenizer_path),
                 local_files_only=True
             )
-            print("✓ Tokenizer loaded successfully")
+            print("[OK] Tokenizer loaded successfully")
         except Exception as e:
             raise RuntimeError(f"Failed to load tokenizer: {e}")
         
@@ -71,7 +77,7 @@ class ONNXEmbeddingServer:
                 str(model_path),
                 providers=providers
             )
-            print("✓ ONNX model loaded successfully")
+            print("[OK] ONNX model loaded successfully")
         except Exception as e:
             raise RuntimeError(f"Failed to load ONNX model: {e}")
     
@@ -145,7 +151,7 @@ async def startup_event():
     print("Starting ONNX Embedding Server...")
     try:
         embedding_server.load_model()
-        print("✓ Server ready!")
+        print("[OK] Server ready!")
     except Exception as e:
         print(f"❌ Failed to start server: {e}")
         raise

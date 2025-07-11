@@ -9,6 +9,12 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Fix Windows encoding issue
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
 
 def run_command(cmd, check=True):
     """Run a command and return the result"""
@@ -26,7 +32,7 @@ def install_dependencies():
     ])
     
     if success:
-        print("✓ Dependencies installed successfully")
+        print("[OK] Dependencies installed successfully")
     else:
         print("❌ Failed to install dependencies")
     
@@ -40,7 +46,7 @@ def convert_model():
     success = run_command([sys.executable, "convert_to_onnx.py"])
     
     if success:
-        print("✓ Model converted successfully")
+        print("[OK] Model converted successfully")
     else:
         print("❌ Failed to convert model")
     
@@ -68,7 +74,7 @@ def verify_setup():
             print(f"  - {file_path}")
         return False
     
-    print("✓ All required files are present")
+    print("[OK] All required files are present")
     return True
 
 
@@ -82,7 +88,7 @@ def main():
         print("❌ Python 3.8+ is required")
         sys.exit(1)
     
-    print(f"✓ Python {sys.version_info.major}.{sys.version_info.minor} detected")
+    print(f"[OK] Python {sys.version_info.major}.{sys.version_info.minor} detected")
     
     # Install dependencies
     if not install_dependencies():

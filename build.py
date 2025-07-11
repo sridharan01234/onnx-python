@@ -10,6 +10,12 @@ import platform
 from pathlib import Path
 import subprocess
 
+# Fix Windows encoding issue
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.detach(), encoding='utf-8')
+
 
 def run_command(cmd, check=True):
     """Run a command and return the result"""
@@ -96,10 +102,10 @@ def build_executable(target_os=None):
     
     try:
         result = run_command(cmd)
-        print(f"✓ Successfully built {output_name}")
+        print(f"[OK] Successfully built {output_name}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Build failed: {e}")
+        print(f"[FAIL] Build failed: {e}")
         print(f"Command that failed: {' '.join(cmd)}")
         return False
 
@@ -119,7 +125,7 @@ def verify_requirements():
             missing_files.append(file_path)
     
     if missing_files:
-        print("❌ Missing required files:")
+        print("[FAIL] Missing required files:")
         for file_path in missing_files:
             print(f"  - {file_path}")
         print("\nPlease run 'python convert_to_onnx.py' first to generate the model files.")
@@ -130,7 +136,7 @@ def verify_requirements():
 
 def main():
     """Main build function"""
-    print("🔨 ONNX Embedding Server Build Script")
+    print("[BUILD] ONNX Embedding Server Build Script")
     print("=" * 50)
     
     # Check requirements
@@ -146,7 +152,7 @@ def main():
     success = build_executable(target_os)
     
     if success:
-        print("✓ Build completed successfully!")
+        print("[OK] Build completed successfully!")
         print(f"Executable is in the build/ directory")
         
         # List built files
@@ -157,7 +163,7 @@ def main():
                 if file.is_file() and file.suffix in ['.exe', ''] and 'embed-server' in file.name:
                     print(f"  - {file}")
     else:
-        print("❌ Build failed!")
+        print("[FAIL] Build failed!")
         sys.exit(1)
 
 
