@@ -1,0 +1,211 @@
+name: Build and Deploy ONNX Embedding Server
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  S3_BUCKET: 'test-dev-figma-cs'
+  AWS_REGION: 'eu-north-1'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            executable: embed-server-linux
+          - os: windows-latest
+            platform: windows
+            executable: embed-server-win.exe
+          - os: macos-latest
+            platform: macos
+            executable: embed-server-macos
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Convert model to ONNX
+      run: python convert_to_onnx.py
+
+    - name: Verify model files
+      run: |
+        ls -la onnx_model/
+        ls -la tokenizer/
+        python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
+
+    - name: Build executable with Nuitka
+      run: |
+        python build.py ${{ matrix.platform }}
+
+    - name: Verify build output
+      run: |
+        ls -la build/
+        if [ -f "build/${{ matrix.executable }}" ]; then
+          echo "✓ Executable built successfully"
+          ls -lh build/${{ matrix.executable }}
+        else
+          echo "❌ Executable not found"
+          exit 1
+        fi
+      shell: bash
+
+    - name: Test executable (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        chmod +x build/${{ matrix.executable }}
+        timeout 30s build/${{ matrix.executable }} &
+        SERVER_PID=$!
+        sleep 10
+        curl -f http://localhost:8000/health || (echo "Health check failed" && exit 1)
+        kill $SERVER_PID || true
+        echo "✓ Executable test passed"
+
+    - name: Test executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        Start-Process -FilePath "build/${{ matrix.executable }}" -NoNewWindow
+        Start-Sleep -Seconds 10
+        try {
+          $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing
+          if ($response.StatusCode -eq 200) {
+            Write-Host "✓ Executable test passed"
+          } else {
+            Write-Host "❌ Health check failed"
+            exit 1
+          }
+        } catch {
+          Write-Host "❌ Health check failed: $_"
+          exit 1
+        }
+        Get-Process | Where-Object {$_.ProcessName -like "*embed-server*"} | Stop-Process -Force
+      shell: powershell
+
+    - name: Create release info
+      run: |
+        echo "Build Date: $(date)" > build/build-info.txt
+        echo "Platform: ${{ matrix.platform }}" >> build/build-info.txt
+        echo "Python Version: ${{ env.PYTHON_VERSION }}" >> build/build-info.txt
+        echo "Commit: ${{ github.sha }}" >> build/build-info.txt
+        echo "Ref: ${{ github.ref }}" >> build/build-info.txt
+      shell: bash
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.executable }}
+        path: |
+          build/${{ matrix.executable }}
+          build/build-info.txt
+        retention-days: 30
+
+    - name: Configure AWS credentials
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_TEST }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_TEST }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Upload to S3
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+      run: |
+        # Create version tag
+        if [[ ${{ github.ref }} == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION="latest"
+        fi
+        
+        # Upload executable
+        aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}
+        aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.platform }}-build-info.txt
+        
+        # Upload to latest as well
+        if [[ "$VERSION" != "latest" ]]; then
+          aws s3 cp build/${{ matrix.executable }} s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.executable }}
+          aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.platform }}-build-info.txt
+        fi
+        
+        echo "✓ Uploaded to S3: s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}"
+      shell: bash
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+
+    - name: Create release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifacts/embed-server-linux/embed-server-linux
+          artifacts/embed-server-win.exe/embed-server-win.exe
+          artifacts/embed-server-macos/embed-server-macos
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify:
+    name: Notify Build Complete
+    needs: build
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Build Status Summary
+      run: |
+        echo "🎯 Build Summary:"
+        echo "Build Status: ${{ needs.build.result }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Ref: ${{ github.ref }}"
+        echo "SHA: ${{ github.sha }}"
+        
+        if [[ "${{ needs.build.result }}" == "success" ]]; then
+          echo "✅ All executables built successfully!"
+          echo "📦 Artifacts uploaded to GitHub Actions"
+          if [[ "${{ github.event_name }}" == "push" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "☁️ Executables uploaded to S3"
+          fi
+        else
+          echo "❌ Build failed"
+        fi

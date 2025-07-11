@@ -1,0 +1,10 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+onnxruntime==1.16.3
+transformers==4.35.2
+torch==2.1.1
+optimum[onnxruntime]==1.14.1
+numpy==1.24.3
+nuitka==1.8.6
+requests==2.31.0
+boto3==1.34.0
