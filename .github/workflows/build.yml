@@ -53,26 +53,40 @@ jobs:
         pip install -r requirements.txt
 
     - name: Convert model to ONNX
-      run: python convert_to_onnx.py
+      run: |
+        echo "Starting model conversion..."
+        python convert_to_onnx.py
+        echo "Model conversion completed"
 
     - name: Verify model files
       run: |
-        ls -la onnx_model/
-        ls -la tokenizer/
-        python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
+        echo "Checking model files..."
+        ls -la onnx_model/ || echo "onnx_model directory not found"
+        ls -la tokenizer/ || echo "tokenizer directory not found"
+        if [ -f "onnx_model/model.onnx" ]; then
+          echo "ONNX model file exists"
+          python -c "import os; print('ONNX model size:', os.path.getsize('onnx_model/model.onnx'), 'bytes')"
+        else
+          echo "ONNX model file not found"
+        fi
 
     - name: Build executable with Nuitka
       run: |
+        echo "Starting build for ${{ matrix.platform }}..."
+        echo "Current directory: $(pwd)"
+        echo "Python version: $(python --version)"
+        echo "Nuitka version: $(python -m nuitka --version)"
         python build.py ${{ matrix.platform }}
+        echo "Build completed"
 
     - name: Verify build output
       run: |
         ls -la build/
         if [ -f "build/${{ matrix.executable }}" ]; then
-          echo "✓ Executable built successfully"
+          echo "[OK] Executable built successfully"
           ls -lh build/${{ matrix.executable }}
         else
-          echo "❌ Executable not found"
+          echo "[FAIL] Executable not found"
           exit 1
         fi
       shell: bash
@@ -86,7 +100,7 @@ jobs:
         sleep 10
         curl -f http://localhost:8000/health || (echo "Health check failed" && exit 1)
         kill $SERVER_PID || true
-        echo "✓ Executable test passed"
+        echo "[OK] Executable test passed"
 
     - name: Test executable (Windows)
       if: matrix.os == 'windows-latest'
@@ -96,13 +110,13 @@ jobs:
         try {
           $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing
           if ($response.StatusCode -eq 200) {
-            Write-Host "✓ Executable test passed"
+            Write-Host "[OK] Executable test passed"
           } else {
-            Write-Host "❌ Health check failed"
+            Write-Host "[FAIL] Health check failed"
             exit 1
           }
         } catch {
-          Write-Host "❌ Health check failed: $_"
+          Write-Host "[FAIL] Health check failed: $_"
           exit 1
         }
         Get-Process | Where-Object {$_.ProcessName -like "*embed-server*"} | Stop-Process -Force
@@ -154,7 +168,7 @@ jobs:
           aws s3 cp build/build-info.txt s3://${{ env.S3_BUCKET }}/onnx-embedding-server/latest/${{ matrix.platform }}-build-info.txt
         fi
         
-        echo "✓ Uploaded to S3: s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}"
+        echo "[OK] Uploaded to S3: s3://${{ env.S3_BUCKET }}/onnx-embedding-server/$VERSION/${{ matrix.executable }}"
       shell: bash
 
   create-release:

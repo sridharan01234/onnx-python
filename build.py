@@ -54,12 +54,8 @@ def build_executable(target_os=None):
     ]
     
     # Add platform-specific options
-    if current_os == "windows":
-        base_cmd.extend([
-            "--disable-console",
-            "--windows-disable-console",
-        ])
-    # For Linux and macOS, keep console enabled for debugging
+    # Keep console enabled for all platforms for debugging
+    pass
     
     # Add data files (model and tokenizer)
     data_files = [

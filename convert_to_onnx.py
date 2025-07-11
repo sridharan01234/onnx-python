@@ -27,9 +27,12 @@ def convert_model_to_onnx():
     tokenizer_dir.mkdir(exist_ok=True)
     
     print(f"Converting {model_name} to ONNX...")
+    print(f"Output directory: {onnx_dir}")
+    print(f"Tokenizer directory: {tokenizer_dir}")
     
     # Export model to ONNX
     try:
+        print("Starting ONNX export...")
         onnx.main_export(
             model_name_or_path=model_name,
             output=str(onnx_dir),
@@ -40,16 +43,21 @@ def convert_model_to_onnx():
         )
         print(f"[OK] Model exported to {onnx_dir}/model.onnx")
     except Exception as e:
-        print(f"Error exporting model: {e}")
+        print(f"[FAIL] Error exporting model: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     # Save tokenizer locally
     try:
+        print("Saving tokenizer...")
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         tokenizer.save_pretrained(str(tokenizer_dir))
         print(f"[OK] Tokenizer saved to {tokenizer_dir}/")
     except Exception as e:
-        print(f"Error saving tokenizer: {e}")
+        print(f"[FAIL] Error saving tokenizer: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     print("[OK] Model conversion completed successfully!")
